@@ -10,6 +10,9 @@ python = "^3.12"
 pydantic = "^2.10.4"
 ipykernel = "^6.29.5"
 structlog = "^24.4.0"
+scipy = "^1.15.1"
+numba = "^0.60.0"
+sparse = "^0.15.5"
 
 
 [tool.poetry.group.dev.dependencies]

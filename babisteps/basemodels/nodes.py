@@ -1,18 +1,21 @@
 import copy
 import random
-from typing import Any, Callable
-
-from pydantic import BaseModel
-
+from typing import Any, Callable, Optional
+import numpy as np
+from pydantic import BaseModel, ConfigDict
+from copy import deepcopy
+from sparse._sparse_array import SparseArray
 
 class State(BaseModel):
-    attr: Any
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    am: SparseArray
     index: int
 
 
 class Entity(BaseModel):
     name: str
     type: str
+    idx: Optional[int] = None
 
     def __hash__(self):
         return hash((self.name, self.type))
@@ -21,6 +24,7 @@ class Entity(BaseModel):
 class Coordenate(BaseModel):
     name: str
     type: str
+    idx: Optional[int] = None
 
     def __hash__(self):
         return hash((self.name, self.type))
@@ -31,70 +35,56 @@ class UnitState(BaseModel):
     coordenate: Coordenate
 
 
-class EntityInLocationState(State):
-    attr: list[UnitState]
+class EntityInCoordenateState(State):
+    am: SparseArray
 
     @property
     def attr_as_set(self):
         attr = []
-        for unit in self.attr:
+        for unit in self.am:
             attr.append((unit.entity, unit.coordenate))
         return set(attr)
 
-    def create_delta(
+    def create_transition(
         self,
         num_transitions: int,
-        coordenate: list[str],
-        any_condition: Callable,
-        all_condition: Callable,
-    ) -> list[UnitState]:
+        condition: Callable,
+    ) -> SparseArray:
         """
         Creates a delta of actor-location pairs based on specified conditions.
         Args:
             num_transitions (int): The number of transitions (actor-location pairs) to 
             create.
             coordenate (list[str]): A list of possible coordenate.
-            any_condition (Callable): A callable that takes a pair (actor, location) 
-            and returns a boolean.
-            all_condition (Callable): A callable that takes a pair (actor, location) 
+            condition (Callable): A callable that takes a pair (actor, location) 
             and returns a boolean.
         Returns:
-            list[UnitState]: A list of UnitState objects representing the delta.
+           SparseArray: A SparseArray objects representing the new state.
         """
-
-        original_set = self.attr_as_set
+        
         while True:
-            delta = []
-            # withou repetition
-            attr = random.sample(list(original_set),
-                                 num_transitions)  # get the actor list
-            rnd_entities = [unit[0] for unit in attr]  # [0] get the entity
-            rnd_coordenates = random.choices([coord for coord in coordenate],
-                                             k=num_transitions)
-            aux_attr = {(entity, coord)
-                        for entity, coord in zip(rnd_entities, rnd_coordenates)
-                        }
-            # validate that the elements in aux_attr are not in original_set
-            if aux_attr.issubset(original_set):
-                continue
+            next_am = deepcopy(self.am)
+            e = random.choices(list(next_am.data.keys()), k=num_transitions)
+            for i_e in e:
+                x, y = i_e[0], i_e[1]
+                #get a different coordenate different from current
+                next_y = random.choice(list(set([x for x in range(next_am.shape[1])]) - set([y])))
+                next_am[x, next_y] = 1
+                next_am[i_e] = 0
 
-            # create deltas
-            for u in aux_attr:
-                e, c = u[0], u[1]
-                delta_i = UnitState(entity=e, coordenate=c)
-                delta.append(delta_i)
             # check if the delta satisfies the conditions
-            if any(any_condition(pair) for pair in aux_attr) and all(
-                    all_condition(pair) for pair in aux_attr):
+            if condition(next_am):
                 pass
             else:
                 continue
 
-            return delta
+            f = self.validate_next(next_am)
+
+            return next_am, f
 
     def create_state_from_delta(self, j: int, delta: list[UnitState]):
-        new_attr = copy.deepcopy(self.attr)
-        new_state = EntityInLocationState(attr=new_attr, index=j)
+        new_attr = copy.deepcopy(self.am)
+        new_state = EntityInCoordenateState(attr=new_attr, index=j)
         for delta_i in delta:
             for unit in new_state.attr:
                 if unit.entity == delta_i.entity:
@@ -102,14 +92,24 @@ class EntityInLocationState(State):
         return new_state
 
     def get_entity_coordenate(self, entity: Entity):
-        for unit in self.attr:
+        for unit in self.am:
             if unit.entity == entity:
                 return unit.coordenate
         return None
 
     def get_entities_in_coodenate(self, coordenate: Coordenate):
         entities = []
-        for unit in self.attr:
+        for unit in self.am:
             if unit.coordenate == coordenate:
                 entities.append(unit.entity)
         return entities
+
+    def validate_next(self, next_am):
+        flag = True
+        # Check that the entitis is no in more than 1
+        # coodenate
+        es = np.arange(next_am.shape[0])
+        for e in es:
+            if sum(next_am[e,:]) != 1:
+                flag = False
+        return flag    
